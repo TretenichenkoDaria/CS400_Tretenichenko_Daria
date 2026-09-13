@@ -1,0 +1,5 @@
+int first
+int second
+first := 100
+second := first - 42
+exit second
