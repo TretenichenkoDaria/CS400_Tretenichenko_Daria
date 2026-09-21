@@ -1,4 +1,0 @@
-ai helped to transfer numbers and letters into ASCII system and back
-also, i had troubles with states checking
-and ai got an idea to add the assign state (=: symbol)
-haven't done the second task
