@@ -1,0 +1,7 @@
+program ::= { statement } "exit" factor
+statement ::= decl | assign
+decl ::= "i32" [ "mut" ] ident "{" expr "}"
+assign ::= ident ":=" expr
+expr ::= term { ( "+" | "-" ) term }
+term ::= factor { "*" factor }
+factor ::= number | ident
