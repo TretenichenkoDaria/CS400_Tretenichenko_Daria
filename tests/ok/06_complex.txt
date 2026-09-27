@@ -1,0 +1,5 @@
+i32 x{15}
+i64 mut y{x}
+i64 z{x + 10}
+y := y * z + x
+exit y
