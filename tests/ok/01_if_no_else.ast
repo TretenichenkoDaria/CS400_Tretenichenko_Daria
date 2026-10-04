@@ -1,0 +1,10 @@
+program
+  decl a i32 mut
+    const 10
+  if
+    bool true
+    block
+      assign a
+        const 20
+  exit
+    var a
