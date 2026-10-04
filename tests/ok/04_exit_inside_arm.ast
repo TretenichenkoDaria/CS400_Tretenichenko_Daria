@@ -1,0 +1,8 @@
+program
+  if
+    bool true
+    block
+      exit
+        const 42
+  exit
+    const 0

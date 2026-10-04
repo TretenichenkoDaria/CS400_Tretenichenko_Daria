@@ -1,3 +1,0 @@
-bool a{true}
-i32 b{a + 5}
-exit b

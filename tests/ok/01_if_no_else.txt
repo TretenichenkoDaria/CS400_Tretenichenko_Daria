@@ -1,4 +1,6 @@
 i32 mut a{10}
-i64 b{20}
-a := b
+if true
+{
+a := 20
+}
 exit a

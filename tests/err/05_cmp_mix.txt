@@ -1,4 +1,0 @@
-bool a{true}
-i32 b{1}
-bool c{a == b}
-exit c

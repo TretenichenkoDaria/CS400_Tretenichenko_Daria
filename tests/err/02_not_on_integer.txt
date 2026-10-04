@@ -1,0 +1,2 @@
+bool a{!10}
+exit a
