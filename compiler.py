@@ -483,6 +483,12 @@ class parser:
                 sys.stderr.write(f"compilation error: line {t2.line}:{t2.col}: junk after 'else'\n")
                 sys.exit(1)
             self.check_eol()
+            t_brace = self.peek()
+            if not t_brace or t_brace.text != "{":
+                l = t_brace.line if t_brace else self.ll
+                c = t_brace.col if t_brace else self.lc + 1
+                sys.stderr.write(f"compilation error: line {l}:{c}: expected '{{' on its own line after 'else'\n")
+                sys.exit(1)
             else_b = self.parse_block()
             
         return ifnode(i.line, i.col, cond, then_b, else_b)
@@ -696,7 +702,7 @@ class semanticchecker:
                 sys.stderr.write(f"compilation error: line {node.line}:{node.col}: built-in type '{t_name}' expects 1 initialiser, got {len(node.inits)}\n")
                 sys.exit(1)
             self.visit(node.inits[0])
-            self.check_assignable(node.inits[0], t_name, node.inits[0], f"initialise '{node.name}'")
+            self.check_assignable(node.inits[0], t_name, node, f"initialise '{node.name}'")
         else:
             st_fields = list(self.structs[t_name].items())
             if len(node.inits) == 1 and node.inits[0].type == t_name:
@@ -734,7 +740,7 @@ class semanticchecker:
                     sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot assign whole struct '{root_name}' containing const fields\n")
                     sys.exit(1)
             self.visit(node.value)
-            self.check_assignable(node.value, decl.type_name, node.value, f"assign to '{root_name}'")
+            self.check_assignable(node.value, decl.type_name, node, f"assign to '{root_name}'")
             node.decl = decl
             node.field_indices = []
             node.target_type = decl.type_name
@@ -765,7 +771,7 @@ class semanticchecker:
                 sys.exit(1)
 
             self.visit(node.value)
-            self.check_assignable(node.value, cur_type, node.value, f"assign to field '{'.'.join(node.target)}'")
+            self.check_assignable(node.value, cur_type, node, f"assign to field '{'.'.join(node.target)}'")
             node.decl = decl
             node.field_indices = field_indices
             node.target_type = cur_type
@@ -902,6 +908,9 @@ class semanticchecker:
     def check_assignable(self, expr, want, at, what):
         have = expr.type
         if have == want or (have == "i32" and want == "i64"): return
+        if want == "i32" and isinstance(expr, constnode) and int(expr.value) > 2147483647:
+            sys.stderr.write(f"compilation error: line {expr.line}:{expr.col}: constant {expr.value} does not fit in i32\n")
+            sys.exit(1)
         sys.stderr.write(f"compilation error: line {at.line}:{at.col}: cannot {what} of type {want} with a value of type {have}\n")
         sys.exit(1)
 
@@ -1130,10 +1139,20 @@ class codegenerator:
             return self.builder.call(fn, arg_vals)
 
 if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        sys.stderr.write("compilation error: missing input file\n")
+        sys.exit(1)
     ast_mode = sys.argv[1] == "--ast"
+    if ast_mode and len(sys.argv) < 3:
+        sys.stderr.write("compilation error: missing input file\n")
+        sys.exit(1)
     inp = sys.argv[2] if ast_mode else sys.argv[1]
     
-    with open(inp, "rb") as f: data = f.read()
+    try:
+        with open(inp, "rb") as f: data = f.read()
+    except Exception as e:
+        sys.stderr.write(f"compilation error: cannot open '{inp}'\n")
+        sys.exit(1)
     
     tree = parser(lex(data)).parse_program()
     sc = semanticchecker()
