@@ -1,0 +1,16 @@
+program
+  fn widen(i64 val) -> i64
+    block
+      decl d i64 const
+        binop *
+          var val
+          const 2
+      exit
+        var d
+  decl small i32 const
+    const 21
+  decl res i64 const
+    call widen
+      var small
+  exit
+    var res

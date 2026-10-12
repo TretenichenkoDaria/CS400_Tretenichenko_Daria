@@ -1,7 +1,11 @@
-program ::= { statement } "exit" factor
-statement ::= decl | assign
-decl ::= "i32" [ "mut" ] ident "{" expr "}"
-assign ::= ident ":=" expr
-expr ::= term { ( "+" | "-" ) term }
-term ::= factor { "*" factor }
-factor ::= number | ident
+program ::= { struct } { fn } { statement } exit
+struct ::= "struct" ident NL "{" NL field_decl { field_decl } "}" NL
+field_decl ::= type [ "mut" ] ident NL
+fn ::= "fn" ident ":=" "(" [ type ident { "," type ident } ] ")" "->" type NL block
+decl ::= type [ "mut" ] ident "{" expr { "," expr } "}"
+type ::= "i32" | "i64" | "bool" | ident
+field ::= ident "." ident { "." ident }
+call ::= ident "(" [ expr { "," expr } ] ")"
+factor ::= number | "true" | "false" | ident | field | call | "!" factor
+assign ::= ident { "." ident } ":=" expr
+exit ::= "exit" factor

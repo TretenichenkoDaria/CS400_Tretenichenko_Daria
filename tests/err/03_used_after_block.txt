@@ -1,5 +1,0 @@
-if true
-{
-i32 a{5}
-}
-exit a
