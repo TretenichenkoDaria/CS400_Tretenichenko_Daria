@@ -1,0 +1,26 @@
+program
+  struct point
+    field x i32 const
+    field y i32 const
+    memberfn sum -> i32
+      block
+        decl s i32 const
+          binop +
+            var x
+            var y
+        exit
+          var s
+  struct circle
+    field center point const
+    field radius i32 const
+  decl p point const
+    const 3
+    const 4
+  decl c circle const
+    var p
+    const 5
+  decl res i32 const
+    membercall sum
+      field c.center
+  exit
+    var res

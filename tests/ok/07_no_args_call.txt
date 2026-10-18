@@ -1,0 +1,11 @@
+struct counter
+{
+ i32 val
+ fn get := () -> i32
+ {
+ exit val
+ }
+}
+counter c{42}
+i32 res{c.get()}
+exit res

@@ -1,0 +1,26 @@
+program
+  struct calc
+    field base i32 const
+    memberfn double_base -> i32
+      block
+        decl d i32 const
+          binop +
+            var base
+            var base
+        exit
+          var d
+    memberfn quad -> i32
+      block
+        decl q i32 const
+          binop +
+            call double_base
+            call double_base
+        exit
+          var q
+  decl c calc const
+    const 5
+  decl res i32 const
+    membercall quad
+      var c
+  exit
+    var res

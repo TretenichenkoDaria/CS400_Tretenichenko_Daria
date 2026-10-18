@@ -1,0 +1,23 @@
+program ::= { struct } { fn } { statement } exit
+struct ::= "struct" ident NL "{" NL field_decl { field_decl } { member_fn } "}" NL
+field_decl ::= type [ "mut" ] ident NL
+member_fn ::= "fn" ident ":=" "(" [ type ident { "," type ident } ] ")" "->" type NL block
+fn ::= "fn" ident ":=" "(" [ type ident { "," type ident } ] ")" "->" type NL block
+statement ::= decl | assign | if_stmt | print_stmt
+decl ::= type [ "mut" ] ident "{" expr { "," expr } "}"
+assign ::= ident { "." ident } ":=" expr
+if_stmt ::= "if" expr NL block [ "else" NL block ]
+print_stmt ::= "print" "(" ( string | expr ) ")"
+block ::= "{" NL { statement | exit } "}" NL
+type ::= "i32" | "i64" | "bool" | ident
+field ::= ident "." ident { "." ident }
+call ::= ident "(" [ expr { "," expr } ] ")"
+member_call ::= ident { "." ident } "." ident "(" [ expr { "," expr } ] ")"
+expr ::= cmp
+cmp ::= arith [ ( "==" | "!=" ) arith ]
+arith ::= term { ( "+" | "-" ) term }
+term ::= factor { "*" factor }
+factor ::= number | "true" | "false" | ident | field | call | member_call | read_call | "!" factor
+read_call ::= "read" "(" ")"
+string ::= '"' { any byte except '"' and newline } '"'
+exit ::= "exit" factor

@@ -1,0 +1,13 @@
+struct Point
+{
+  i32 mut x
+  i32 mut y
+}
+fn makePoint := (i32 a, i32 b) -> Point
+{
+  Point p{a, b}
+  exit p
+}
+Point pt{makePoint(12, 34)}
+i32 sum{pt.x + pt.y}
+exit sum
