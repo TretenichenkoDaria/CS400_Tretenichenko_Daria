@@ -10,7 +10,7 @@ passed = 0
 failed = 0
 
 def run(args, stdin=None):
-    r = subprocess.run(args, capture_output=True, text=True)
+    r = subprocess.run(args, capture_output=True, text=True, input=stdin)
     return r.stdout, r.stderr, r.returncode
 
 def check(label, actual, expected):
@@ -35,6 +35,7 @@ for name in sorted(os.listdir(ok_dir)):
     src = os.path.join(ok_dir, name)
     exp_file = os.path.join(ok_dir, base + ".expected")
     ast_file = os.path.join(ok_dir, base + ".ast")
+    in_file = os.path.join(ok_dir, base + ".in")
 
     with tempfile.NamedTemporaryFile(suffix=".ll", delete=False) as tmp:
         ll_path = tmp.name
@@ -47,7 +48,11 @@ for name in sorted(os.listdir(ok_dir)):
             continue
 
         if os.path.exists(exp_file):
-            stdout, _, rc2 = run([lli, ll_path])
+            stdin_data = None
+            if os.path.exists(in_file):
+                with open(in_file) as f:
+                    stdin_data = f.read()
+            stdout, _, rc2 = run([lli, ll_path], stdin=stdin_data)
             with open(exp_file) as f:
                 expected = f.read()
             check(base, stdout, expected)

@@ -13,6 +13,7 @@ class token:
 def lex(data: bytes):
     lines, tokens = [], []
     state, start, line, col, i = "start", 0, 1, 1, 0
+    start_line, start_col = 1, 1
     kws = {
         "i32": "typename", "i64": "typename", "bool": "typename",
         "mut": "specifier", "exit": "keyword",
@@ -30,6 +31,8 @@ def lex(data: bytes):
             elif b == 35: state = "comment"
             elif 65 <= b <= 90 or 97 <= b <= 122 or b == 95: state, start = "ident", i
             elif 48 <= b <= 57: state, start = "number", i
+            elif b == 34:
+                state, start, start_line, start_col = "string", i, line, col
             elif b == 10:
                 if tokens: lines.append(tokens)
                 tokens, line, col = [], line + 1, 0
@@ -50,6 +53,14 @@ def lex(data: bytes):
             else:
                 sys.stderr.write(f"compilation error: line {line}:{col}: bad byte '{chr(b)}'\n")
                 sys.exit(1)
+        elif state == "string":
+            if b == 10 or b is None:
+                sys.stderr.write(f"compilation error: line {start_line}:{start_col}: string literal not closed on its line\n")
+                sys.exit(1)
+            elif b == 34:
+                s_val = data[start + 1:i].decode("utf-8", errors="replace")
+                tokens.append(token("string", s_val, start_line, start_col))
+                state = "start"
         elif state == "comment":
             if b is None or b == 10:
                 state = "start"
@@ -92,6 +103,9 @@ def lex(data: bytes):
                 tokens.append(token("constant", w, line, col - (i - start)))
                 state = "start"; continue
         i += 1; col += 1
+    if state == "string":
+        sys.stderr.write(f"compilation error: line {start_line}:{start_col}: string literal not closed on its line\n")
+        sys.exit(1)
     if tokens: lines.append(tokens)
     return lines
 
@@ -107,17 +121,27 @@ class programnode:
         self.exit_node.dump(ind + "  ")
 
 class structnode:
-    def __init__(self, l, c, name, fields):
-        self.line, self.col, self.name, self.fields = l, c, name, fields
+    def __init__(self, l, c, name, fields, member_funcs):
+        self.line, self.col, self.name, self.fields, self.member_funcs = l, c, name, fields, member_funcs
     def dump(self, ind=""):
         print(ind + f"struct {self.name}")
         for f in self.fields: f.dump(ind + "  ")
+        for mf in self.member_funcs: mf.dump(ind + "  ")
 
 class fielddeclnode:
     def __init__(self, l, c, type_name, mut, name):
         self.line, self.col, self.type_name, self.mut, self.name = l, c, type_name, mut, name
     def dump(self, ind=""):
         print(ind + f"field {self.name} {self.type_name} {'mut' if self.mut else 'const'}")
+
+class memberfnnode:
+    def __init__(self, l, c, name, params, ret_type, body):
+        self.line, self.col, self.name, self.params, self.ret_type, self.body = l, c, name, params, ret_type, body
+    def dump(self, ind=""):
+        print(ind + f"memberfn {self.name} -> {self.ret_type}")
+        for p_type, p_name, _, _ in self.params:
+            print(ind + f"  param {p_name} {p_type}")
+        self.body.dump(ind + "  ")
 
 class funcnode:
     def __init__(self, l, c, name, params, ret_type, body):
@@ -160,6 +184,27 @@ class blocknode:
         for s in self.stmts: s.dump(ind + "  ")
         if self.ex: self.ex.dump(ind + "  ")
 
+class printnode:
+    def __init__(self, l, c, arg):
+        self.line, self.col, self.arg = l, c, arg
+    def dump(self, ind=""):
+        print(ind + "print")
+        self.arg.dump(ind + "  ")
+
+class stringnode:
+    def __init__(self, l, c, val):
+        self.line, self.col, self.value = l, c, val
+        self.type = "string"
+    def dump(self, ind=""):
+        print(ind + f"string \"{self.value}\"")
+
+class readnode:
+    def __init__(self, l, c):
+        self.line, self.col = l, c
+        self.type = "i32"
+    def dump(self, ind=""):
+        print(ind + "read")
+
 class notnode:
     def __init__(self, l, c, val): 
         self.line, self.col, self.val = l, c, val
@@ -198,6 +243,15 @@ class callnode:
         self.type = None
     def dump(self, ind=""):
         print(ind + f"call {self.name}")
+        for a in self.args: a.dump(ind + "  ")
+
+class membercallnode:
+    def __init__(self, l, c, target, name, args):
+        self.line, self.col, self.target, self.name, self.args = l, c, target, name, args
+        self.type = None
+    def dump(self, ind=""):
+        print(ind + f"membercall {self.name}")
+        self.target.dump(ind + "  ")
         for a in self.args: a.dump(ind + "  ")
 
 class constnode:
@@ -255,6 +309,11 @@ class parser:
             sys.exit(1)
         return self.eat()
 
+    def check_not_reserved(self, t):
+        if t and t.text in ("read", "print"):
+            sys.stderr.write(f"compilation error: line {t.line}:{t.col}: '{t.text}' is a reserved keyword\n")
+            sys.exit(1)
+
     def parse_program(self):
         structs, funcs, stmts, ex = [], [], [], None
         phase = "struct"
@@ -294,6 +353,7 @@ class parser:
     def parse_struct(self):
         st = self.eat()
         name_t = self.exp("identifier", "struct name")
+        self.check_not_reserved(name_t)
         self.check_eol()
 
         t = self.peek()
@@ -306,18 +366,32 @@ class parser:
         self.check_eol()
 
         fields = []
+        member_funcs = []
+        phase = "field"
+
         while self.lpos < len(self.lines):
             t = self.peek()
             if t and t.text == "}":
                 break
-            f_type = self.parse_type()
-            mut = False
-            if self.peek() and self.peek().text == "mut":
-                mut = True
-                self.eat()
-            f_name = self.exp("identifier", "field name")
-            self.check_eol()
-            fields.append(fielddeclnode(f_name.line, f_name.col, f_type, mut, f_name.text))
+            if t and t.text == "fn":
+                if not fields:
+                    sys.stderr.write(f"compilation error: line {t.line}:{t.col}: member function before the first field\n")
+                    sys.exit(1)
+                phase = "fn"
+                member_funcs.append(self.parse_member_fn())
+            else:
+                if phase == "fn":
+                    sys.stderr.write(f"compilation error: line {t.line}:{t.col}: field after a member function\n")
+                    sys.exit(1)
+                f_type = self.parse_type()
+                mut = False
+                if self.peek() and self.peek().text == "mut":
+                    mut = True
+                    self.eat()
+                f_name = self.exp("identifier", "field name")
+                self.check_not_reserved(f_name)
+                self.check_eol()
+                fields.append(fielddeclnode(f_name.line, f_name.col, f_type, mut, f_name.text))
 
         t = self.peek()
         if not t or t.text != "}":
@@ -330,11 +404,12 @@ class parser:
             sys.stderr.write(f"compilation error: line {st.line}:{st.col}: struct has no fields\n")
             sys.exit(1)
 
-        return structnode(st.line, st.col, name_t.text, fields)
+        return structnode(st.line, st.col, name_t.text, fields, member_funcs)
 
-    def parse_fn(self):
+    def parse_member_fn(self):
         fn_kw = self.eat()
         name_t = self.exp("identifier", "function name")
+        self.check_not_reserved(name_t)
         self.exp(":=", "':='")
         self.exp("(", "'('")
 
@@ -342,11 +417,48 @@ class parser:
         if self.peek() and self.peek().text != ")":
             p_type = self.parse_type()
             p_name = self.exp("identifier", "parameter name")
+            self.check_not_reserved(p_name)
             params.append((p_type, p_name.text, p_name.line, p_name.col))
             while self.peek() and self.peek().text == ",":
                 self.eat()
                 p_type = self.parse_type()
                 p_name = self.exp("identifier", "parameter name")
+                self.check_not_reserved(p_name)
+                params.append((p_type, p_name.text, p_name.line, p_name.col))
+
+        self.exp(")", "')'")
+        self.exp("->", "'->'")
+        ret_type = self.parse_type()
+        self.check_eol()
+
+        t = self.peek()
+        if not t or t.text != "{":
+            l = t.line if t else self.ll
+            c = t.col if t else self.lc + 1
+            sys.stderr.write(f"compilation error: line {l}:{c}: expected '{{' on its own line after fn header\n")
+            sys.exit(1)
+
+        body = self.parse_block()
+        return memberfnnode(fn_kw.line, fn_kw.col, name_t.text, params, ret_type, body)
+
+    def parse_fn(self):
+        fn_kw = self.eat()
+        name_t = self.exp("identifier", "function name")
+        self.check_not_reserved(name_t)
+        self.exp(":=", "':='")
+        self.exp("(", "'('")
+
+        params = []
+        if self.peek() and self.peek().text != ")":
+            p_type = self.parse_type()
+            p_name = self.exp("identifier", "parameter name")
+            self.check_not_reserved(p_name)
+            params.append((p_type, p_name.text, p_name.line, p_name.col))
+            while self.peek() and self.peek().text == ",":
+                self.eat()
+                p_type = self.parse_type()
+                p_name = self.exp("identifier", "parameter name")
+                self.check_not_reserved(p_name)
                 params.append((p_type, p_name.text, p_name.line, p_name.col))
 
         self.exp(")", "')'")
@@ -375,7 +487,14 @@ class parser:
 
     def parse_statement(self):
         t = self.peek()
-        if t and (t.text in ("i32", "i64", "bool") or (t.kind == "identifier" and self.is_decl_start())):
+        if t and t.text == "print":
+            s = self.parse_print()
+            self.check_eol()
+            return s
+        elif t and t.kind == "string":
+            sys.stderr.write(f"compilation error: line {t.line}:{t.col}: string literal outside print\n")
+            sys.exit(1)
+        elif t and (t.text in ("i32", "i64", "bool") or (t.kind == "identifier" and self.is_decl_start())):
             s = self.parse_decl()
             self.check_eol()
             return s
@@ -397,6 +516,25 @@ class parser:
             sys.stderr.write(f"compilation error: line {l}:{c}: bad statement\n")
             sys.exit(1)
 
+    def parse_print(self):
+        pr = self.eat()
+        self.exp("(", "'('")
+        t = self.peek()
+        if not t or t.text == ")":
+            sys.stderr.write(f"compilation error: line {pr.line}:{pr.col}: print() expects 1 argument, got 0\n")
+            sys.exit(1)
+        if t.kind == "string":
+            arg = self.eat()
+            arg_node = stringnode(arg.line, arg.col, arg.text)
+        else:
+            arg_node = self.parse_expr()
+        if self.peek() and self.peek().text == ",":
+            t_comma = self.peek()
+            sys.stderr.write(f"compilation error: line {t_comma.line}:{t_comma.col}: print() takes only 1 argument\n")
+            sys.exit(1)
+        self.exp(")", "')'")
+        return printnode(pr.line, pr.col, arg_node)
+
     def is_decl_start(self):
         cur_line = self.lines[self.lpos]
         p = self.tpos + 1
@@ -417,6 +555,7 @@ class parser:
         mut = False
         if self.peek() and self.peek().text == "mut": mut = True; self.eat()
         n = self.exp("identifier", "name")
+        self.check_not_reserved(n)
         
         b1 = self.peek()
         if not b1 or b1.text != "{":
@@ -443,10 +582,12 @@ class parser:
 
     def parse_assign(self):
         n = self.exp("identifier", "target")
+        self.check_not_reserved(n)
         chain = [n.text]
         while self.peek() and self.peek().text == ".":
             self.eat()
             fld = self.exp("identifier", "field")
+            self.check_not_reserved(fld)
             chain.append(fld.text)
 
         o = self.exp("operator", ":=")
@@ -559,11 +700,30 @@ class parser:
         if not t:
             sys.stderr.write(f"compilation error: line {self.ll}:{self.lc + 1}: need val\n")
             sys.exit(1)
+        if t.kind == "string":
+            sys.stderr.write(f"compilation error: line {t.line}:{t.col}: string literal outside print\n")
+            sys.exit(1)
         if t.text == "!":
             op = self.eat()
             return notnode(op.line, op.col, self.parse_factor())
         if t.kind == "constant": return constnode(self.eat().line, t.col, t.text)
         if t.kind == "boolean": return boolnode(self.eat().line, t.col, t.text)
+        if t.text == "print":
+            sys.stderr.write(f"compilation error: line {t.line}:{t.col}: 'print' has no value\n")
+            sys.exit(1)
+        if t.text == "read":
+            id_t = self.eat()
+            if self.peek() and self.peek().text == "(":
+                self.eat()
+                if self.peek() and self.peek().text != ")":
+                    t_arg = self.peek()
+                    sys.stderr.write(f"compilation error: line {t_arg.line}:{t_arg.col}: read() takes no arguments\n")
+                    sys.exit(1)
+                self.exp(")", "')'")
+                return readnode(id_t.line, id_t.col)
+            else:
+                sys.stderr.write(f"compilation error: line {id_t.line}:{id_t.col}: 'read' is a built-in function, expected '()'\n")
+                sys.exit(1)
         if t.kind == "identifier":
             id_t = self.eat()
             if self.peek() and self.peek().text == "(":
@@ -577,12 +737,32 @@ class parser:
                 self.exp(")", "')'")
                 return callnode(id_t.line, id_t.col, id_t.text, args)
             if self.peek() and self.peek().text == ".":
-                chain = [id_t.text]
+                chain = [id_t]
                 while self.peek() and self.peek().text == ".":
                     self.eat()
-                    f_name = self.exp("identifier", "field")
-                    chain.append(f_name.text)
-                return fieldaccessnode(id_t.line, id_t.col, chain)
+                    nxt = self.exp("identifier", "name after '.'")
+                    if nxt.text == "print":
+                        sys.stderr.write(f"compilation error: line {nxt.line}:{nxt.col}: 'print' is a reserved keyword\n")
+                        sys.exit(1)
+                    if nxt.text == "read":
+                        sys.stderr.write(f"compilation error: line {nxt.line}:{nxt.col}: 'read' is a reserved keyword\n")
+                        sys.exit(1)
+                    if self.peek() and self.peek().text == "(":
+                        self.eat()
+                        args = []
+                        if self.peek() and self.peek().text != ")":
+                            args.append(self.parse_expr())
+                            while self.peek() and self.peek().text == ",":
+                                self.eat()
+                                args.append(self.parse_expr())
+                        self.exp(")", "')'")
+                        if len(chain) == 1:
+                            target = varnode(chain[0].line, chain[0].col, chain[0].text)
+                        else:
+                            target = fieldaccessnode(chain[0].line, chain[0].col, [x.text for x in chain])
+                        return membercallnode(nxt.line, nxt.col, target, nxt.text, args)
+                    chain.append(nxt)
+                return fieldaccessnode(chain[0].line, chain[0].col, [x.text for x in chain])
             return varnode(id_t.line, id_t.col, id_t.text)
 
         sys.stderr.write(f"compilation error: line {t.line}:{t.col}: bad val\n")
@@ -593,9 +773,14 @@ class semanticchecker:
     def __init__(self):
         self.structs = {}
         self.struct_nodes = {}
+        self.struct_member_funcs = {}
         self.funcs = {}
         self.scopes = [{}]
         self.current_fn = None
+        self.current_struct = None
+        self.current_member_fn = None
+        self.mutating_member_funcs = set()
+        self.all_member_calls = []
 
     def is_type_known(self, t):
         return t in ("i32", "i64", "bool") or t in self.structs
@@ -613,8 +798,8 @@ class semanticchecker:
 
     def visit_program(self, node):
         for s in node.structs:
-            if s.name in ("i32", "i64", "bool"):
-                sys.stderr.write(f"compilation error: line {s.line}:{s.col}: cannot redeclare built-in type '{s.name}'\n")
+            if s.name in ("i32", "i64", "bool", "read", "print"):
+                sys.stderr.write(f"compilation error: line {s.line}:{s.col}: cannot redeclare built-in type or keyword '{s.name}'\n")
                 sys.exit(1)
             if s.name in self.structs:
                 sys.stderr.write(f"compilation error: line {s.line}:{s.col}: struct '{s.name}' already declared\n")
@@ -624,15 +809,42 @@ class semanticchecker:
                 if f.name in fields_map:
                     sys.stderr.write(f"compilation error: line {f.line}:{f.col}: field '{f.name}' already declared in struct '{s.name}'\n")
                     sys.exit(1)
+                fields_map[f.name] = (idx, f.type_name, f.mut)
+            self.structs[s.name] = fields_map
+            self.struct_nodes[s.name] = s
+            self.struct_member_funcs[s.name] = {}
+
+        for s in node.structs:
+            for idx, f in enumerate(s.fields):
                 if not self.is_type_known(f.type_name):
                     sys.stderr.write(f"compilation error: line {f.line}:{f.col}: unknown type '{f.type_name}' in struct '{s.name}'\n")
                     sys.exit(1)
                 if f.type_name == s.name:
                     sys.stderr.write(f"compilation error: line {f.line}:{f.col}: struct '{s.name}' cannot contain itself\n")
                     sys.exit(1)
-                fields_map[f.name] = (idx, f.type_name, f.mut)
-            self.structs[s.name] = fields_map
-            self.struct_nodes[s.name] = s
+
+        for s in node.structs:
+            mf_map = self.struct_member_funcs[s.name]
+            for mf in s.member_funcs:
+                if mf.name in self.structs[s.name]:
+                    sys.stderr.write(f"compilation error: line {mf.line}:{mf.col}: field and member function have the same name '{mf.name}' in struct '{s.name}'\n")
+                    sys.exit(1)
+                if mf.name in mf_map:
+                    sys.stderr.write(f"compilation error: line {mf.line}:{mf.col}: member function '{mf.name}' already declared in struct '{s.name}'\n")
+                    sys.exit(1)
+                if not self.is_type_known(mf.ret_type):
+                    sys.stderr.write(f"compilation error: line {mf.line}:{mf.col}: unknown return type '{mf.ret_type}'\n")
+                    sys.exit(1)
+                param_names = set()
+                for p_type, p_name, p_line, p_col in mf.params:
+                    if p_name in param_names:
+                        sys.stderr.write(f"compilation error: line {p_line}:{p_col}: duplicate parameter name '{p_name}'\n")
+                        sys.exit(1)
+                    if not self.is_type_known(p_type):
+                        sys.stderr.write(f"compilation error: line {p_line}:{p_col}: unknown parameter type '{p_type}'\n")
+                        sys.exit(1)
+                    param_names.add(p_name)
+                mf_map[mf.name] = mf
 
         for f in node.funcs:
             if f.name in self.funcs:
@@ -656,6 +868,27 @@ class semanticchecker:
                 "node": f
             }
 
+        for s in node.structs:
+            self.current_struct = s
+            for mf in s.member_funcs:
+                self.current_member_fn = mf
+                mf.direct_mutates = False
+                mf.calls_on_this = []
+                mf.calls_on_fields = []
+                mf.struct_name = s.name
+                param_scope = {}
+                for p_type, p_name, p_line, p_col in mf.params:
+                    p_decl = declnode(p_line, p_col, p_type, p_name, False, [])
+                    p_decl.type = p_type
+                    param_scope[p_name] = p_decl
+                mf.saved_param_scope = param_scope
+                self.scopes = [param_scope]
+                self.visit_block(mf.body, is_fn_body=True)
+                if mf.direct_mutates:
+                    self.mutating_member_funcs.add((s.name, mf.name))
+                self.current_member_fn = None
+            self.current_struct = None
+
         for f in node.funcs:
             self.current_fn = f
             param_scope = {}
@@ -663,19 +896,86 @@ class semanticchecker:
                 p_decl = declnode(p_line, p_col, p_type, p_name, False, [])
                 p_decl.type = p_type
                 param_scope[p_name] = p_decl
-            
             f.saved_param_scope = param_scope
             self.scopes = [param_scope]
             self.visit_block(f.body, is_fn_body=True)
             self.current_fn = None
 
+        changed = True
+        while changed:
+            changed = False
+            for s in node.structs:
+                for mf in s.member_funcs:
+                    if (s.name, mf.name) in self.mutating_member_funcs:
+                        continue
+                    for called_mf_name in mf.calls_on_this:
+                        if (s.name, called_mf_name) in self.mutating_member_funcs:
+                            self.mutating_member_funcs.add((s.name, mf.name))
+                            changed = True
+                            break
+                    if (s.name, mf.name) in self.mutating_member_funcs:
+                        continue
+                    for field_type, called_mf_name in mf.calls_on_fields:
+                        if (field_type, called_mf_name) in self.mutating_member_funcs:
+                            self.mutating_member_funcs.add((s.name, mf.name))
+                            changed = True
+                            break
+
         self.scopes = [{}]
         self.current_fn = None
+        self.current_struct = None
+        self.current_member_fn = None
         for s in node.stmts:
             if isinstance(s, declnode): self.visit_decl(s)
             elif isinstance(s, assignnode): self.visit_assign(s)
             elif isinstance(s, ifnode): self.visit_if(s)
+            elif isinstance(s, printnode): self.visit_print(s)
         self.visit_exit(node.exit_node)
+
+        self.check_all_member_calls()
+
+    def check_all_member_calls(self):
+        for node, target_struct, method_name, target_node, caller_mf in self.all_member_calls:
+            if (target_struct, method_name) in self.mutating_member_funcs:
+                if target_node is None:
+                    continue
+                if isinstance(target_node, varnode):
+                    if hasattr(target_node, "is_this_field") and target_node.is_this_field:
+                        finfo = self.structs[caller_mf.struct_name][target_node.name]
+                        if not finfo[2]:
+                            sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot call mutating member function '{method_name}' through const link '{target_node.name}'\n")
+                            sys.exit(1)
+                    else:
+                        decl = target_node.decl
+                        if not decl.mut:
+                            sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot call mutating member function '{method_name}' on const object '{target_node.name}'\n")
+                            sys.exit(1)
+                elif isinstance(target_node, fieldaccessnode):
+                    if hasattr(target_node, "is_this_field") and target_node.is_this_field:
+                        root_fname = target_node.chain[0]
+                        finfo = self.structs[caller_mf.struct_name][root_fname]
+                        if not finfo[2]:
+                            sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot call mutating member function '{method_name}' through const link '{root_fname}'\n")
+                            sys.exit(1)
+                        cur_t = finfo[1]
+                        for fn in target_node.chain[1:]:
+                            sub_info = self.structs[cur_t][fn]
+                            if not sub_info[2]:
+                                sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot call mutating member function '{method_name}' through const link '{fn}'\n")
+                                sys.exit(1)
+                            cur_t = sub_info[1]
+                    else:
+                        root_decl = target_node.decl
+                        if not root_decl.mut:
+                            sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot call mutating member function '{method_name}' on const object '{target_node.chain[0]}'\n")
+                            sys.exit(1)
+                        cur_t = root_decl.type_name
+                        for fn in target_node.chain[1:]:
+                            sub_info = self.structs[cur_t][fn]
+                            if not sub_info[2]:
+                                sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot call mutating member function '{method_name}' through const link '{fn}'\n")
+                                sys.exit(1)
+                            cur_t = sub_info[1]
 
     def visit_block(self, node, is_fn_body=False):
         if not is_fn_body:
@@ -684,9 +984,19 @@ class semanticchecker:
             if isinstance(s, declnode): self.visit_decl(s)
             elif isinstance(s, assignnode): self.visit_assign(s)
             elif isinstance(s, ifnode): self.visit_if(s)
+            elif isinstance(s, printnode): self.visit_print(s)
         if node.ex: self.visit_exit(node.ex)
         if not is_fn_body:
             self.scopes.pop()
+
+    def visit_print(self, node):
+        if isinstance(node.arg, stringnode):
+            return
+        self.visit(node.arg)
+        t = node.arg.type
+        if t not in ("i32", "i64", "bool") and t not in self.structs:
+            sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot print value of type '{t}'\n")
+            sys.exit(1)
 
     def visit_decl(self, node):
         if not self.is_type_known(node.type_name):
@@ -727,7 +1037,56 @@ class semanticchecker:
             if root_name in scope:
                 decl = scope[root_name]
                 break
+
         if not decl:
+            if self.current_struct is not None and root_name in self.structs[self.current_struct.name]:
+                node.is_this_field = True
+                st_name = self.current_struct.name
+                fidx, ftype, fmut = self.structs[st_name][root_name]
+                if len(node.target) == 1:
+                    if not fmut:
+                        sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot assign to const field '{root_name}'\n")
+                        sys.exit(1)
+                    if ftype in self.structs and not self.is_all_mut(ftype):
+                        sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot assign whole struct '{root_name}' containing const fields\n")
+                        sys.exit(1)
+                    self.visit(node.value)
+                    self.check_assignable(node.value, ftype, node, f"assign to '{root_name}'")
+                    node.field_indices = [fidx]
+                    node.target_type = ftype
+                    if self.current_member_fn:
+                        self.current_member_fn.direct_mutates = True
+                    return
+                else:
+                    if not fmut:
+                        sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot write through const link '{root_name}'\n")
+                        sys.exit(1)
+                    cur_type = ftype
+                    field_indices = [fidx]
+                    for field_name in node.target[1:]:
+                        if cur_type not in self.structs:
+                            sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot access field '{field_name}' of non-struct type '{cur_type}'\n")
+                            sys.exit(1)
+                        st_fields = self.structs[cur_type]
+                        if field_name not in st_fields:
+                            sys.stderr.write(f"compilation error: line {node.line}:{node.col}: unknown field '{field_name}' in struct '{cur_type}'\n")
+                            sys.exit(1)
+                        sub_idx, sub_type, sub_mut = st_fields[field_name]
+                        if not sub_mut:
+                            sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot write through const link '{field_name}'\n")
+                            sys.exit(1)
+                        field_indices.append(sub_idx)
+                        cur_type = sub_type
+                    if cur_type in self.structs and not self.is_all_mut(cur_type):
+                        sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot assign struct field containing const fields\n")
+                        sys.exit(1)
+                    self.visit(node.value)
+                    self.check_assignable(node.value, cur_type, node, f"assign to field '{'.'.join(node.target)}'")
+                    node.field_indices = field_indices
+                    node.target_type = cur_type
+                    if self.current_member_fn:
+                        self.current_member_fn.direct_mutates = True
+                    return
             sys.stderr.write(f"compilation error: line {node.line}:{node.col}: variable '{root_name}' is used before its declaration\n")
             sys.exit(1)
 
@@ -795,7 +1154,12 @@ class semanticchecker:
     def visit_exit(self, node):
         self.visit(node.value)
         t = node.value.type
-        if self.current_fn is not None:
+        if self.current_member_fn is not None:
+            expected_ret = self.current_member_fn.ret_type
+            if t != expected_ret:
+                sys.stderr.write(f"compilation error: line {node.line}:{node.col}: exit type {t} does not match function return type {expected_ret}\n")
+                sys.exit(1)
+        elif self.current_fn is not None:
             expected_ret = self.current_fn.ret_type
             if t != expected_ret:
                 sys.stderr.write(f"compilation error: line {node.line}:{node.col}: exit type {t} does not match function return type {expected_ret}\n")
@@ -843,6 +1207,13 @@ class semanticchecker:
                 decl = scope[node.name]
                 break
         if not decl:
+            if self.current_struct is not None and node.name in self.structs[self.current_struct.name]:
+                node.is_this_field = True
+                fidx, ftype, fmut = self.structs[self.current_struct.name][node.name]
+                node.field_index = fidx
+                node.field_mut = fmut
+                node.type = ftype
+                return node.type
             sys.stderr.write(f"compilation error: line {node.line}:{node.col}: variable '{node.name}' is used before its declaration\n")
             sys.exit(1)
         node.decl = decl
@@ -857,6 +1228,24 @@ class semanticchecker:
                 decl = scope[root_name]
                 break
         if not decl:
+            if self.current_struct is not None and root_name in self.structs[self.current_struct.name]:
+                node.is_this_field = True
+                fidx, ftype, fmut = self.structs[self.current_struct.name][root_name]
+                node.field_indices = [fidx]
+                cur_type = ftype
+                for field_name in node.chain[1:]:
+                    if cur_type not in self.structs:
+                        sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot access field '{field_name}' of non-struct type '{cur_type}'\n")
+                        sys.exit(1)
+                    st_fields = self.structs[cur_type]
+                    if field_name not in st_fields:
+                        sys.stderr.write(f"compilation error: line {node.line}:{node.col}: unknown field '{field_name}' in struct '{cur_type}'\n")
+                        sys.exit(1)
+                    sub_idx, sub_type, sub_mut = st_fields[field_name]
+                    node.field_indices.append(sub_idx)
+                    cur_type = sub_type
+                node.type = cur_type
+                return node.type
             sys.stderr.write(f"compilation error: line {node.line}:{node.col}: variable '{root_name}' is used before its declaration\n")
             sys.exit(1)
 
@@ -879,6 +1268,22 @@ class semanticchecker:
         return node.type
 
     def visit_call(self, node):
+        if self.current_struct is not None and node.name in self.struct_member_funcs[self.current_struct.name]:
+            mf = self.struct_member_funcs[self.current_struct.name][node.name]
+            node.is_this_member_call = True
+            node.target_struct = self.current_struct.name
+            if len(node.args) != len(mf.params):
+                sys.stderr.write(f"compilation error: line {node.line}:{node.col}: function '{node.name}' expects {len(mf.params)} arguments, got {len(node.args)}\n")
+                sys.exit(1)
+            for arg, (p_type, p_name, _, _) in zip(node.args, mf.params):
+                self.visit(arg)
+                self.check_assignable(arg, p_type, arg, f"pass argument for '{p_name}'")
+            node.type = mf.ret_type
+            if self.current_member_fn:
+                self.current_member_fn.calls_on_this.append(node.name)
+            self.all_member_calls.append((node, self.current_struct.name, node.name, None, self.current_member_fn))
+            return node.type
+
         if node.name not in self.funcs:
             sys.stderr.write(f"compilation error: line {node.line}:{node.col}: unknown function '{node.name}'\n")
             sys.exit(1)
@@ -896,6 +1301,49 @@ class semanticchecker:
         node.fn_info = fn_sig
         return node.type
 
+    def visit_member_call(self, node):
+        if isinstance(node.target, varnode):
+            found = False
+            for scope in reversed(self.scopes):
+                if node.target.name in scope:
+                    found = True
+                    break
+            if not found and self.current_struct is not None and node.target.name in self.structs[self.current_struct.name]:
+                found = True
+            if not found and node.target.name in self.structs:
+                sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot call member function '{node.name}' on type '{node.target.name}'\n")
+                sys.exit(1)
+
+        target_type = self.visit(node.target)
+        if target_type not in self.structs:
+            sys.stderr.write(f"compilation error: line {node.line}:{node.col}: cannot call member function '{node.name}' on non-struct type '{target_type}'\n")
+            sys.exit(1)
+
+        if node.name not in self.struct_member_funcs[target_type]:
+            sys.stderr.write(f"compilation error: line {node.line}:{node.col}: struct '{target_type}' has no member function '{node.name}'\n")
+            sys.exit(1)
+
+        mf = self.struct_member_funcs[target_type][node.name]
+        if len(node.args) != len(mf.params):
+            sys.stderr.write(f"compilation error: line {node.line}:{node.col}: member function '{node.name}' expects {len(mf.params)} arguments, got {len(node.args)}\n")
+            sys.exit(1)
+
+        for arg, (p_type, p_name, _, _) in zip(node.args, mf.params):
+            self.visit(arg)
+            self.check_assignable(arg, p_type, arg, f"pass argument for '{p_name}'")
+
+        node.type = mf.ret_type
+        node.target_struct = target_type
+
+        if self.current_member_fn:
+            if isinstance(node.target, varnode) and hasattr(node.target, "is_this_field") and node.target.is_this_field:
+                self.current_member_fn.calls_on_fields.append((target_type, node.name))
+            elif isinstance(node.target, fieldaccessnode) and hasattr(node.target, "is_this_field") and node.target.is_this_field:
+                self.current_member_fn.calls_on_fields.append((target_type, node.name))
+
+        self.all_member_calls.append((node, target_type, node.name, node.target, self.current_member_fn))
+        return node.type
+
     def visit(self, node):
         if isinstance(node, binopnode): return self.visit_binop(node)
         elif isinstance(node, constnode): return self.visit_const(node)
@@ -903,6 +1351,8 @@ class semanticchecker:
         elif isinstance(node, varnode): return self.visit_var(node)
         elif isinstance(node, fieldaccessnode): return self.visit_field_access(node)
         elif isinstance(node, callnode): return self.visit_call(node)
+        elif isinstance(node, membercallnode): return self.visit_member_call(node)
+        elif isinstance(node, readnode): return node.type
         elif isinstance(node, notnode): return self.visit_not(node)
 
     def check_assignable(self, expr, want, at, what):
@@ -919,14 +1369,25 @@ class codegenerator:
     def __init__(self, module):
         self.module = module
         self.struct_ir_types = {}
+        self.struct_nodes = {}
         self.func_ir = {}
+        self.member_func_ir = {}
         self.syms = {}
         self.current_func = None
+        self.current_struct = None
+        self.current_this_ptr = None
         self.entry_bb = None
         self.builder = None
+        self.str_constants = {}
         
         self.printf = ir.Function(self.module, ir.FunctionType(i32, [ir.PointerType(i8)], var_arg=True), name="printf")
+        self.scanf = ir.Function(self.module, ir.FunctionType(i32, [ir.PointerType(i8)], var_arg=True), name="scanf")
         
+        txt_read = b"%d\0"
+        self.fmt_read = ir.GlobalVariable(self.module, ir.ArrayType(i8, len(txt_read)), name="fmt_read")
+        self.fmt_read.linkage, self.fmt_read.global_constant = "private", True
+        self.fmt_read.initializer = ir.Constant(ir.ArrayType(i8, len(txt_read)), bytearray(txt_read))
+
         txt_int = b"Program exit with result %lld\n\0"
         self.fmt_int = ir.GlobalVariable(self.module, ir.ArrayType(i8, len(txt_int)), name="fmt_int")
         self.fmt_int.linkage, self.fmt_int.global_constant = "private", True
@@ -946,6 +1407,24 @@ class codegenerator:
         self.str_false = ir.GlobalVariable(self.module, ir.ArrayType(i8, len(str_f)), name="str_false")
         self.str_false.linkage, self.str_false.global_constant = "private", True
         self.str_false.initializer = ir.Constant(ir.ArrayType(i8, len(str_f)), bytearray(str_f))
+
+    def get_str_constant(self, text):
+        if text not in self.str_constants:
+            b = text.encode("utf-8") + b"\0"
+            name = f"str_const_{len(self.str_constants)}"
+            gv = ir.GlobalVariable(self.module, ir.ArrayType(i8, len(b)), name=name)
+            gv.linkage, gv.global_constant = "private", True
+            gv.initializer = ir.Constant(ir.ArrayType(i8, len(b)), bytearray(b))
+            self.str_constants[text] = gv
+        return self.str_constants[text]
+
+    def call_printf_str(self, text):
+        gv = self.get_str_constant(text)
+        fmt = self.get_str_constant("%s")
+        self.builder.call(self.printf, [
+            self.builder.bitcast(fmt, ir.PointerType(i8)),
+            self.builder.bitcast(gv, ir.PointerType(i8))
+        ])
 
     def type_to_ir(self, t):
         if t == "i64": return i64
@@ -971,10 +1450,20 @@ class codegenerator:
         for s in node.structs:
             st = self.module.context.get_identified_type(s.name)
             self.struct_ir_types[s.name] = st
+            self.struct_nodes[s.name] = s
             
         for s in node.structs:
             element_types = [self.type_to_ir(f.type_name) for f in s.fields]
             self.struct_ir_types[s.name].set_body(*element_types)
+
+        for s in node.structs:
+            st_ptr_ty = ir.PointerType(self.struct_ir_types[s.name])
+            for mf in s.member_funcs:
+                param_types = [st_ptr_ty] + [self.type_to_ir(p[0]) for p in mf.params]
+                ret_type = self.type_to_ir(mf.ret_type)
+                fn_ty = ir.FunctionType(ret_type, param_types)
+                fn = ir.Function(self.module, fn_ty, name=f"{s.name}_{mf.name}")
+                self.member_func_ir[(s.name, mf.name)] = fn
 
         for f in node.funcs:
             param_types = [self.type_to_ir(p[0]) for p in f.params]
@@ -983,11 +1472,17 @@ class codegenerator:
             fn = ir.Function(self.module, fn_ty, name=f"user_{f.name}")
             self.func_ir[f.name] = fn
 
+        for s in node.structs:
+            for mf in s.member_funcs:
+                self.gen_member_function(s, mf)
+
         for f in node.funcs:
             self.gen_user_function(f)
 
         main_fn = ir.Function(self.module, ir.FunctionType(i32, []), name="main")
         self.current_func = main_fn
+        self.current_struct = None
+        self.current_this_ptr = None
         self.entry_bb = main_fn.append_basic_block("entry")
         self.builder = ir.IRBuilder(self.entry_bb)
 
@@ -995,7 +1490,30 @@ class codegenerator:
             if isinstance(s, declnode): self.gen_decl(s)
             elif isinstance(s, assignnode): self.gen_assign(s)
             elif isinstance(s, ifnode): self.gen_if(s)
+            elif isinstance(s, printnode): self.gen_print(s)
         self.gen_exit(node.exit_node)
+
+    def gen_member_function(self, s, mf):
+        fn = self.member_func_ir[(s.name, mf.name)]
+        self.current_func = fn
+        self.current_struct = s
+        self.entry_bb = fn.append_basic_block("entry")
+        self.builder = ir.IRBuilder(self.entry_bb)
+
+        this_arg = fn.args[0]
+        this_arg.name = "this"
+        self.current_this_ptr = this_arg
+
+        for idx, (p_type, p_name, _, _) in enumerate(mf.params):
+            arg_val = fn.args[idx + 1]
+            arg_val.name = p_name
+            t_ir = self.type_to_ir(p_type)
+            slot = self.alloca_entry(f"{p_name}.slot", t_ir)
+            self.builder.store(arg_val, slot)
+            p_decl = mf.saved_param_scope[p_name] if hasattr(mf, 'saved_param_scope') else None
+            self.syms[p_decl] = slot
+
+        self.gen_block(mf.body)
 
     def gen_user_function(self, f):
         fn = self.func_ir[f.name]
@@ -1019,7 +1537,98 @@ class codegenerator:
             if isinstance(s, declnode): self.gen_decl(s)
             elif isinstance(s, assignnode): self.gen_assign(s)
             elif isinstance(s, ifnode): self.gen_if(s)
+            elif isinstance(s, printnode): self.gen_print(s)
         if node.ex: self.gen_exit(node.ex)
+
+    def gen_print(self, node):
+        arg = node.arg
+        if isinstance(arg, stringnode):
+            str_gv = self.get_str_constant(arg.value)
+            fmt = self.get_str_constant("%s\n")
+            self.builder.call(self.printf, [
+                self.builder.bitcast(fmt, ir.PointerType(i8)),
+                self.builder.bitcast(str_gv, ir.PointerType(i8))
+            ])
+        elif arg.type == "i32":
+            v = self.gen_expr(arg)
+            fmt = self.get_str_constant("%d\n")
+            self.builder.call(self.printf, [
+                self.builder.bitcast(fmt, ir.PointerType(i8)),
+                v
+            ])
+        elif arg.type == "i64":
+            v = self.gen_expr(arg)
+            fmt = self.get_str_constant("%lld\n")
+            self.builder.call(self.printf, [
+                self.builder.bitcast(fmt, ir.PointerType(i8)),
+                v
+            ])
+        elif arg.type == "bool":
+            v = self.gen_expr(arg)
+            sel = self.builder.select(
+                v,
+                self.builder.bitcast(self.str_true, ir.PointerType(i8)),
+                self.builder.bitcast(self.str_false, ir.PointerType(i8))
+            )
+            fmt = self.get_str_constant("%s\n")
+            self.builder.call(self.printf, [
+                self.builder.bitcast(fmt, ir.PointerType(i8)),
+                sel
+            ])
+        else:
+            st_name = arg.type
+            if isinstance(arg, varnode):
+                if hasattr(arg, "is_this_field") and arg.is_this_field:
+                    ptr = self.builder.gep(self.current_this_ptr, [ir.Constant(i32, 0), ir.Constant(i32, arg.field_index)])
+                else:
+                    ptr = self.syms[arg.decl]
+            elif isinstance(arg, fieldaccessnode):
+                if hasattr(arg, "is_this_field") and arg.is_this_field:
+                    base_ptr = self.current_this_ptr
+                else:
+                    base_ptr = self.syms[arg.decl]
+                gep_indices = [ir.Constant(i32, 0)] + [ir.Constant(i32, idx) for idx in arg.field_indices]
+                ptr = self.builder.gep(base_ptr, gep_indices)
+            else:
+                val = self.gen_expr(arg)
+                ptr = self.alloca_entry("print_struct_tmp", self.struct_ir_types[st_name])
+                self.builder.store(val, ptr)
+            self.gen_print_struct(st_name, ptr, is_root=True)
+
+    def gen_print_struct(self, st_name, struct_ptr, is_root=False):
+        st_node = self.struct_nodes[st_name]
+        self.call_printf_str(f"{st_name}{{")
+        for idx, f in enumerate(st_node.fields):
+            if idx > 0:
+                self.call_printf_str(f", {f.name}: ")
+            else:
+                self.call_printf_str(f"{f.name}: ")
+            
+            f_gep = self.builder.gep(struct_ptr, [ir.Constant(i32, 0), ir.Constant(i32, idx)])
+            if f.type_name == "i32":
+                val = self.builder.load(f_gep)
+                fmt = self.get_str_constant("%d")
+                self.builder.call(self.printf, [self.builder.bitcast(fmt, ir.PointerType(i8)), val])
+            elif f.type_name == "i64":
+                val = self.builder.load(f_gep)
+                fmt = self.get_str_constant("%lld")
+                self.builder.call(self.printf, [self.builder.bitcast(fmt, ir.PointerType(i8)), val])
+            elif f.type_name == "bool":
+                val = self.builder.load(f_gep)
+                sel = self.builder.select(
+                    val,
+                    self.builder.bitcast(self.str_true, ir.PointerType(i8)),
+                    self.builder.bitcast(self.str_false, ir.PointerType(i8))
+                )
+                fmt = self.get_str_constant("%s")
+                self.builder.call(self.printf, [self.builder.bitcast(fmt, ir.PointerType(i8)), sel])
+            else:
+                self.gen_print_struct(f.type_name, f_gep, is_root=False)
+                
+        if is_root:
+            self.call_printf_str("}\n")
+        else:
+            self.call_printf_str("}")
 
     def gen_if(self, node):
         cond = self.gen_expr(node.cond)
@@ -1067,6 +1676,15 @@ class codegenerator:
         return st_ir.elements[idx]
 
     def gen_assign(self, node):
+        if hasattr(node, "is_this_field") and node.is_this_field:
+            base_ptr = self.current_this_ptr
+            gep_indices = [ir.Constant(i32, 0)] + [ir.Constant(i32, idx) for idx in node.field_indices]
+            field_ptr = self.builder.gep(base_ptr, gep_indices)
+            val = self.gen_expr(node.value)
+            val = self.coerce(val, node.value.type, node.target_type)
+            self.builder.store(val, field_ptr)
+            return
+
         base_ptr = self.syms[node.decl]
         if not node.field_indices:
             val = self.gen_expr(node.value)
@@ -1121,14 +1739,31 @@ class codegenerator:
             val = self.gen_expr(node.val)
             return self.builder.not_(val)
         elif isinstance(node, varnode):
+            if hasattr(node, "is_this_field") and node.is_this_field:
+                f_ptr = self.builder.gep(self.current_this_ptr, [ir.Constant(i32, 0), ir.Constant(i32, node.field_index)])
+                return self.builder.load(f_ptr)
             ptr = self.syms[node.decl]
             return self.builder.load(ptr)
         elif isinstance(node, fieldaccessnode):
-            base_ptr = self.syms[node.decl]
+            if hasattr(node, "is_this_field") and node.is_this_field:
+                base_ptr = self.current_this_ptr
+            else:
+                base_ptr = self.syms[node.decl]
             gep_indices = [ir.Constant(i32, 0)] + [ir.Constant(i32, idx) for idx in node.field_indices]
             f_ptr = self.builder.gep(base_ptr, gep_indices)
             return self.builder.load(f_ptr)
         elif isinstance(node, callnode):
+            if hasattr(node, "is_this_member_call") and node.is_this_member_call:
+                fn = self.member_func_ir[(node.target_struct, node.name)]
+                mf_sig = self.struct_nodes[node.target_struct].member_funcs
+                target_mf = next(m for m in mf_sig if m.name == node.name)
+                arg_vals = [self.current_this_ptr]
+                for arg_node, (p_type, p_name, _, _) in zip(node.args, target_mf.params):
+                    v = self.gen_expr(arg_node)
+                    v = self.coerce(v, arg_node.type, p_type)
+                    arg_vals.append(v)
+                return self.builder.call(fn, arg_vals)
+
             fn = self.func_ir[node.name]
             callee_params = node.fn_info["params"]
             arg_vals = []
@@ -1137,6 +1772,35 @@ class codegenerator:
                 v = self.coerce(v, arg_node.type, p_type)
                 arg_vals.append(v)
             return self.builder.call(fn, arg_vals)
+        elif isinstance(node, membercallnode):
+            fn = self.member_func_ir[(node.target_struct, node.name)]
+            if isinstance(node.target, varnode):
+                if hasattr(node.target, "is_this_field") and node.target.is_this_field:
+                    this_target_ptr = self.builder.gep(self.current_this_ptr, [ir.Constant(i32, 0), ir.Constant(i32, node.target.field_index)])
+                else:
+                    this_target_ptr = self.syms[node.target.decl]
+            elif isinstance(node.target, fieldaccessnode):
+                if hasattr(node.target, "is_this_field") and node.target.is_this_field:
+                    base_ptr = self.current_this_ptr
+                else:
+                    base_ptr = self.syms[node.target.decl]
+                gep_indices = [ir.Constant(i32, 0)] + [ir.Constant(i32, idx) for idx in node.target.field_indices]
+                this_target_ptr = self.builder.gep(base_ptr, gep_indices)
+            else:
+                this_target_ptr = self.current_this_ptr
+
+            target_mf = next(m for m in self.struct_nodes[node.target_struct].member_funcs if m.name == node.name)
+            arg_vals = [this_target_ptr]
+            for arg_node, (p_type, p_name, _, _) in zip(node.args, target_mf.params):
+                v = self.gen_expr(arg_node)
+                v = self.coerce(v, arg_node.type, p_type)
+                arg_vals.append(v)
+            return self.builder.call(fn, arg_vals)
+        elif isinstance(node, readnode):
+            slot = self.alloca_entry("read.slot", i32)
+            fmt = self.builder.bitcast(self.fmt_read, ir.PointerType(i8))
+            self.builder.call(self.scanf, [fmt, slot])
+            return self.builder.load(slot)
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -1158,6 +1822,10 @@ if __name__ == "__main__":
     sc = semanticchecker()
     sc.visit_program(tree)
 
+    for s in tree.structs:
+        for mf in s.member_funcs:
+            mf.body_scope = mf.saved_param_scope if hasattr(mf, 'saved_param_scope') else {}
+
     for f in tree.funcs:
         f.body_scope = f.saved_param_scope if hasattr(f, 'saved_param_scope') else {}
 
@@ -1165,7 +1833,7 @@ if __name__ == "__main__":
         tree.dump()
         sys.exit(0)
         
-    m = ir.Module(name="practice6")
+    m = ir.Module(name="practice7")
     m.triple = llvm.get_default_triple()
     
     cg = codegenerator(m)

@@ -1,0 +1,7 @@
+start:
+42
+7000000000
+true
+pair{a: 1, b: 2}
+wrapper{p: pair{a: 1, b: 2}, flag: true}
+Program exit with result 0
