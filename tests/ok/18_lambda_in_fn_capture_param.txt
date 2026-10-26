@@ -1,0 +1,12 @@
+fn make_adder := (i32 offset) -> i32
+{
+  fn add := [offset](i32 x) -> i32
+  {
+    i32 sum{offset + x}
+    exit sum
+  }
+  i32 ans{add(7)}
+  exit ans
+}
+print(make_adder(10))
+exit 0

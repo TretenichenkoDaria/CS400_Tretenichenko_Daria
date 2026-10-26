@@ -1,0 +1,27 @@
+program
+  decl res i32 mut
+    const 0
+  decl flag bool const
+    bool true
+  if
+    var flag
+    block
+      decl x i32 const
+        const 20
+      lambda sub -> i32
+        capture x
+        param y i32
+        block
+          decl diff i32 const
+            binop -
+              var x
+              var y
+          exit
+            var diff
+      assign res
+        call sub
+          const 5
+  print
+    var res
+  exit
+    const 0

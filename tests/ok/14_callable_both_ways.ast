@@ -1,0 +1,23 @@
+program
+  struct Adder
+    field base i32 const
+    memberfn call -> i32
+      param x i32
+      block
+        decl res i32 const
+          binop +
+            var base
+            var x
+        exit
+          var res
+  decl add Adder const
+    const 10
+  print
+    call add
+      const 5
+  print
+    membercall call
+      var add
+      const 5
+  exit
+    const 0

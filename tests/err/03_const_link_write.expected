@@ -1,0 +1,1 @@
+compilation error: line 7:1: cannot write through const object 'p'

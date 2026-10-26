@@ -1,0 +1,8 @@
+struct num
+{
+ i32 val
+}
+num n{read()}
+i32 extra{read()}
+i32 res{n.val + extra}
+exit res

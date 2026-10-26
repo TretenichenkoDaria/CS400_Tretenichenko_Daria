@@ -1,0 +1,28 @@
+program
+  struct Multiplier
+    field factor i32 const
+    memberfn call -> i32
+      param val i32
+      block
+        decl res i32 const
+          binop *
+            var val
+            var factor
+        exit
+          var res
+  struct Calculator
+    field mult Multiplier const
+  decl m Multiplier const
+    const 3
+  decl c Calculator const
+    var m
+  print
+    membercall mult
+      var c
+      const 7
+  print
+    membercall call
+      field c.mult
+      const 7
+  exit
+    const 0
