@@ -3,10 +3,12 @@ struct ::= "struct" ident NL "{" NL field_decl { field_decl } { member_fn } "}" 
 field_decl ::= type [ "mut" ] ident NL
 member_fn ::= "fn" ident ":=" "(" [ type ident { "," type ident } ] ")" "->" type NL block
 fn ::= "fn" ident ":=" "(" [ type ident { "," type ident } ] ")" "->" type NL block
-statement ::= decl | assign | if_stmt | print_stmt
+statement ::= decl | assign | if_stmt | while_stmt | print_stmt | lambda
 decl ::= type [ "mut" ] ident "{" expr { "," expr } "}"
 assign ::= ident { "." ident } ":=" expr
 if_stmt ::= "if" expr NL block [ "else" NL block ]
+while_stmt ::= "while" expr NL block
+lambda ::= "fn" ident ":=" "[" [ ident { "," ident } ] "]" "(" [ type ident { "," type ident } ] ")" "->" type NL block
 print_stmt ::= "print" "(" ( string | expr ) ")"
 block ::= "{" NL { statement | exit } "}" NL
 type ::= "i32" | "i64" | "bool" | ident
