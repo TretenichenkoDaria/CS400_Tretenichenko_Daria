@@ -1,0 +1,12 @@
+program
+  decl r i32 mut
+    const 0
+  if
+    bool true
+    block
+      decl x i32 const
+        const 10
+      assign r
+        var x
+  exit
+    var r

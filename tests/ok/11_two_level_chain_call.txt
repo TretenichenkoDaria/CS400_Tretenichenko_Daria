@@ -1,0 +1,19 @@
+struct point
+{
+ i32 x
+ i32 y
+ fn sum := () -> i32
+ {
+ i32 s{x + y}
+ exit s
+ }
+}
+struct circle
+{
+ point center
+ i32 radius
+}
+point p{3, 4}
+circle c{p, 5}
+i32 res{c.center.sum()}
+exit res

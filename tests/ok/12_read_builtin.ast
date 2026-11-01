@@ -1,0 +1,13 @@
+program
+  struct num
+    field val i32 const
+  decl n num const
+    read
+  decl extra i32 const
+    read
+  decl res i32 const
+    binop +
+      field n.val
+      var extra
+  exit
+    var res

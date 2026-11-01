@@ -1,0 +1,11 @@
+program
+  fn greet() -> i32
+    block
+      print
+        string "hello from greet"
+      exit
+        const 42
+  decl unused_var i32 const
+    call greet
+  exit
+    const 0

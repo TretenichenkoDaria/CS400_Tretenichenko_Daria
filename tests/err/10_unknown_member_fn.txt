@@ -1,0 +1,7 @@
+struct point
+{
+ i32 x
+}
+point p{1}
+i32 res{p.missing()}
+exit res

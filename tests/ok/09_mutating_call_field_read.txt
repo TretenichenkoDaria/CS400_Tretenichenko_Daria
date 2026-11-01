@@ -1,0 +1,13 @@
+struct box
+{
+ i32 mut value
+ fn inc := (i32 d) -> i32
+ {
+ value := value + d
+ exit value
+ }
+}
+box mut b{10}
+i32 dummy{b.inc(5)}
+i32 res{b.value}
+exit res

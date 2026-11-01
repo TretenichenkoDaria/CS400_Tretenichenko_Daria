@@ -1,0 +1,10 @@
+fn add := (i32 a, i32 b) -> i32
+{
+  i32 res{a + b}
+  exit res
+}
+i32 x{20}
+i32 y{22}
+i32 ans{add(x, y)}
+exit ans
+

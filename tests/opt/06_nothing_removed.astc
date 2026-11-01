@@ -1,0 +1,19 @@
+program
+  fn add(i32 a, i32 b) -> i32
+    block
+      decl res i32 const
+        binop +
+          var a
+          var b
+      exit
+        var res
+  decl x i32 const
+    const 20
+  decl y i32 const
+    const 22
+  decl ans i32 const
+    call add
+      var x
+      var y
+  exit
+    var ans

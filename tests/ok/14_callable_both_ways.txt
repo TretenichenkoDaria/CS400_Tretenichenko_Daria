@@ -1,0 +1,13 @@
+struct Adder
+{
+  i32 base
+  fn call := (i32 x) -> i32
+  {
+    i32 res{base + x}
+    exit res
+  }
+}
+Adder add{10}
+print(add(5))
+print(add.call(5))
+exit 0
