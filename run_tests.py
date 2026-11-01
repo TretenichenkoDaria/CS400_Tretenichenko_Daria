@@ -6,6 +6,8 @@ import tempfile
 python = sys.executable
 lli = "/usr/local/Cellar/llvm@15/15.0.7/bin/lli"
 
+opt_flag = ["--remove-unused"] if ("--remove-unused" in sys.argv or os.environ.get("REMOVE_UNUSED") == "1") else []
+
 passed = 0
 failed = 0
 
@@ -41,7 +43,7 @@ for name in sorted(os.listdir(ok_dir)):
         ll_path = tmp.name
 
     try:
-        out, err, rc = run([python, "compiler.py", src, ll_path])
+        out, err, rc = run([python, "compiler.py"] + opt_flag + [src, ll_path])
         if rc != 0:
             print(f" fail {base} (compile failed): {err.strip()}")
             failed += 1
@@ -82,7 +84,7 @@ for name in sorted(os.listdir(err_dir)):
         ll_path = tmp.name
 
     try:
-        out, err, rc = run([python, "compiler.py", src, ll_path])
+        out, err, rc = run([python, "compiler.py"] + opt_flag + [src, ll_path])
         if rc == 0:
             print(f" fail {base} (expected compile error, got success)")
             failed += 1
@@ -93,6 +95,59 @@ for name in sorted(os.listdir(err_dir)):
     finally:
         if os.path.exists(ll_path):
             os.unlink(ll_path)
+
+opt_dir = "tests/opt"
+if os.path.exists(opt_dir):
+    print()
+    print("=== tests/opt ===")
+    for name in sorted(os.listdir(opt_dir)):
+        if not name.endswith(".txt"):
+            continue
+        base = name[:-4]
+        src = os.path.join(opt_dir, name)
+        exp_file = os.path.join(opt_dir, base + ".expected")
+        astc_file = os.path.join(opt_dir, base + ".astc")
+        in_file = os.path.join(opt_dir, base + ".in")
+
+        with tempfile.NamedTemporaryFile(suffix=".ll", delete=False) as tmp:
+            ll_path = tmp.name
+
+        try:
+            out, err, rc = run([python, "compiler.py", "--remove-unused", src, ll_path])
+            if rc != 0:
+                print(f" fail {base} (compile with --remove-unused failed): {err.strip()}")
+                failed += 1
+                continue
+
+            if os.path.exists(exp_file):
+                stdin_data = None
+                if os.path.exists(in_file):
+                    with open(in_file) as f:
+                        stdin_data = f.read()
+                stdout, _, rc2 = run([lli, ll_path], stdin=stdin_data)
+                with open(exp_file) as f:
+                    expected = f.read()
+                check(base + " (--remove-unused)", stdout, expected)
+
+            if os.path.exists(astc_file):
+                astc_out, _, _ = run([python, "compiler.py", "--remove-unused", "--ast-checked", src])
+                with open(astc_file) as f:
+                    expected_astc = f.read()
+                check(base + " (--ast-checked)", astc_out, expected_astc)
+
+            out_noopt, err_noopt, rc_noopt = run([python, "compiler.py", src, ll_path])
+            if rc_noopt == 0 and os.path.exists(exp_file):
+                stdin_data = None
+                if os.path.exists(in_file):
+                    with open(in_file) as f:
+                        stdin_data = f.read()
+                stdout_noopt, _, _ = run([lli, ll_path], stdin=stdin_data)
+                with open(exp_file) as f:
+                    expected = f.read()
+                check(base + " (without flag)", stdout_noopt, expected)
+        finally:
+            if os.path.exists(ll_path):
+                os.unlink(ll_path)
 
 print()
 total = passed + failed

@@ -2333,12 +2333,160 @@ class codegenerator:
             self.builder.call(self.scanf, [fmt, slot])
             return self.builder.load(slot)
 
+def has_call_or_read(node):
+    if node is None:
+        return False
+    if isinstance(node, (readnode, callnode, membercallnode)):
+        return True
+    if isinstance(node, (constnode, boolnode, stringnode, varnode, fieldaccessnode)):
+        return False
+    if isinstance(node, notnode):
+        return has_call_or_read(node.val)
+    if isinstance(node, binopnode):
+        return has_call_or_read(node.left) or has_call_or_read(node.right)
+    if isinstance(node, (list, tuple)):
+        return any(has_call_or_read(x) for x in node)
+    return False
+
+class UseCounter:
+    def __init__(self):
+        self.reads = {}
+        self.func_calls = {}
+
+    def read(self, decl):
+        self.reads[id(decl)] = self.reads.get(id(decl), 0) + 1
+
+    def call_func(self, f):
+        self.func_calls[id(f)] = self.func_calls.get(id(f), 0) + 1
+
+    def count(self, tree):
+        for f in tree.funcs:
+            self.func_calls[id(f)] = 0
+        for s in tree.structs:
+            if not s.name.startswith("lambda."):
+                for mf in s.member_funcs:
+                    self.visit_block(mf.body)
+        for f in tree.funcs:
+            self.visit_block(f.body)
+        for s in tree.stmts:
+            self.visit_stmt(s)
+        self.visit(tree.exit_node)
+
+    def visit_block(self, block):
+        for s in block.stmts:
+            self.visit_stmt(s)
+        if block.ex:
+            self.visit(block.ex)
+
+    def visit_stmt(self, s):
+        if isinstance(s, declnode):
+            self.reads.setdefault(id(s), 0)
+            if any(has_call_or_read(e) for e in s.inits):
+                self.read(s)
+            for e in s.inits:
+                self.visit(e)
+        elif isinstance(s, assignnode):
+            if has_call_or_read(s.value):
+                if hasattr(s, 'decl') and s.decl is not None:
+                    self.read(s.decl)
+            self.visit(s.value)
+        elif isinstance(s, ifnode):
+            self.visit(s.cond)
+            self.visit_block(s.then_block)
+            if s.else_block:
+                self.visit_block(s.else_block)
+        elif isinstance(s, whilenode):
+            self.visit(s.cond)
+            self.visit_block(s.body)
+        elif isinstance(s, lambdanode):
+            if hasattr(s, 'rewritten_decl') and s.rewritten_decl is not None:
+                for init in s.rewritten_decl.inits:
+                    self.visit(init)
+            self.visit_block(s.body)
+        elif isinstance(s, printnode):
+            if not isinstance(s.arg, stringnode):
+                self.visit(s.arg)
+
+    def visit(self, e):
+        if e is None:
+            return
+        if isinstance(e, varnode):
+            if hasattr(e, 'decl') and e.decl is not None:
+                self.read(e.decl)
+        elif isinstance(e, fieldaccessnode):
+            if hasattr(e, 'decl') and e.decl is not None:
+                self.read(e.decl)
+        elif isinstance(e, callnode):
+            if hasattr(e, 'fn_info') and e.fn_info and 'node' in e.fn_info:
+                self.call_func(e.fn_info['node'])
+            for a in e.args:
+                self.visit(a)
+        elif isinstance(e, membercallnode):
+            self.visit(e.target)
+            for a in e.args:
+                self.visit(a)
+        elif isinstance(e, binopnode):
+            self.visit(e.left)
+            self.visit(e.right)
+        elif isinstance(e, notnode):
+            self.visit(e.val)
+        elif isinstance(e, exitnode):
+            self.visit(e.value)
+
+class Pruner:
+    def __init__(self, dead_decls, dead_funcs):
+        self.dead_decls = dead_decls
+        self.dead_funcs = dead_funcs
+
+    def prune_stmts(self, stmts):
+        new_stmts = []
+        for s in stmts:
+            if isinstance(s, declnode) and id(s) in self.dead_decls:
+                continue
+            if isinstance(s, assignnode) and hasattr(s, 'decl') and s.decl is not None and id(s.decl) in self.dead_decls:
+                continue
+            if isinstance(s, ifnode):
+                self.prune_block(s.then_block)
+                if s.else_block:
+                    self.prune_block(s.else_block)
+            elif isinstance(s, whilenode):
+                self.prune_block(s.body)
+            elif isinstance(s, lambdanode):
+                self.prune_block(s.body)
+            new_stmts.append(s)
+        return new_stmts
+
+    def prune_block(self, block):
+        block.stmts = self.prune_stmts(block.stmts)
+
+    def prune(self, tree):
+        tree.funcs = [f for f in tree.funcs if id(f) not in self.dead_funcs]
+        for f in tree.funcs:
+            self.prune_block(f.body)
+        for s in tree.structs:
+            if not s.name.startswith("lambda."):
+                for mf in s.member_funcs:
+                    self.prune_block(mf.body)
+        tree.stmts = self.prune_stmts(tree.stmts)
+        return tree
+
+def remove_unused(tree):
+    while True:
+        counter = UseCounter()
+        counter.count(tree)
+        dead_decls = {d for d, k in counter.reads.items() if k == 0}
+        dead_funcs = {id(f) for f in tree.funcs if counter.func_calls.get(id(f), 0) == 0}
+        if not dead_decls and not dead_funcs:
+            return tree
+        Pruner(dead_decls, dead_funcs).prune(tree)
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.stderr.write("compilation error: missing input file\n")
         sys.exit(1)
     ast_mode = False
     ast_checked_mode = False
+    remove_unused_mode = False
     inp = None
     out_file = "output.ll"
     
@@ -2349,6 +2497,8 @@ if __name__ == "__main__":
             ast_mode = True
         elif arg == "--ast-checked":
             ast_checked_mode = True
+        elif arg == "--remove-unused":
+            remove_unused_mode = True
         elif inp is None:
             inp = arg
         else:
@@ -2373,6 +2523,9 @@ if __name__ == "__main__":
     sc = semanticchecker()
     sc.visit_program(tree)
 
+    if remove_unused_mode:
+        tree = remove_unused(tree)
+
     if ast_checked_mode:
         tree.dump()
         sys.exit(0)
@@ -2384,7 +2537,7 @@ if __name__ == "__main__":
     for f in tree.funcs:
         f.body_scope = f.saved_param_scope if hasattr(f, 'saved_param_scope') else {}
 
-    m = ir.Module(name="practice8")
+    m = ir.Module(name="practice9")
     m.triple = llvm.get_default_triple()
     
     cg = codegenerator(m)
