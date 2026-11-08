@@ -5,6 +5,18 @@ import tempfile
 
 python = sys.executable
 lli = "/usr/local/Cellar/llvm@15/15.0.7/bin/lli"
+if not os.path.exists(lli):
+    lli = "lli"
+
+llc = "/usr/local/Cellar/llvm@15/15.0.7/bin/llc"
+if not os.path.exists(llc):
+    llc = "llc"
+
+clang = "/usr/local/Cellar/llvm@15/15.0.7/bin/clang"
+if not os.path.exists(clang):
+    clang = "/usr/bin/clang"
+if not os.path.exists(clang):
+    clang = "clang"
 
 opt_flag = ["--remove-unused"] if ("--remove-unused" in sys.argv or os.environ.get("REMOVE_UNUSED") == "1") else []
 
@@ -148,6 +160,62 @@ if os.path.exists(opt_dir):
         finally:
             if os.path.exists(ll_path):
                 os.unlink(ll_path)
+
+io_dir = "tests/io"
+if os.path.exists(io_dir):
+    print()
+    print("=== tests/io ===")
+    for name in sorted(os.listdir(io_dir)):
+        if not name.endswith(".txt"):
+            continue
+        base = name[:-4]
+        src = os.path.join(io_dir, name)
+
+        with tempfile.NamedTemporaryFile(suffix=".ll", delete=False) as tmp_ll:
+            ll_path = tmp_ll.name
+        with tempfile.NamedTemporaryFile(suffix=".o", delete=False) as tmp_o:
+            o_path = tmp_o.name
+        with tempfile.NamedTemporaryFile(suffix="", delete=False) as tmp_bin:
+            bin_path = tmp_bin.name
+
+        try:
+            out, err, rc = run([python, "compiler.py"] + opt_flag + [src, ll_path])
+            if rc != 0:
+                print(f" fail {base} (compile failed): {err.strip()}")
+                failed += 1
+                continue
+
+            out_llc, err_llc, rc_llc = run([llc, "-filetype=obj", "-relocation-model=pic", ll_path, "-o", o_path])
+            if rc_llc != 0:
+                print(f" fail {base} (llc failed): {err_llc.strip()}")
+                failed += 1
+                continue
+
+            out_clang, err_clang, rc_clang = run([clang, "-fPIE", o_path, "-o", bin_path])
+            if rc_clang != 0:
+                print(f" fail {base} (clang failed): {err_clang.strip()}")
+                failed += 1
+                continue
+
+            for fname in sorted(os.listdir(io_dir)):
+                if fname.startswith(base + ".") and fname.endswith(".in"):
+                    sess_name = fname[len(base) + 1:-3]
+                    in_path = os.path.join(io_dir, fname)
+                    exp_path = os.path.join(io_dir, f"{base}.{sess_name}.expected")
+                    if os.path.exists(exp_path):
+                        with open(in_path) as f:
+                            stdin_data = f.read()
+                        with open(exp_path) as f:
+                            expected = f.read()
+                        stdout, stderr, rc_run = run([bin_path], stdin=stdin_data)
+                        check(f"{base}.{sess_name}", stdout, expected)
+        finally:
+            if os.path.exists(ll_path):
+                os.unlink(ll_path)
+            if os.path.exists(o_path):
+                os.unlink(o_path)
+            if os.path.exists(bin_path):
+                os.unlink(bin_path)
 
 print()
 total = passed + failed
