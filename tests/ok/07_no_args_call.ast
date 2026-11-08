@@ -1,0 +1,14 @@
+program
+  struct counter
+    field val i32 const
+    memberfn get -> i32
+      block
+        exit
+          var val
+  decl c counter const
+    const 42
+  decl res i32 const
+    membercall get
+      var c
+  exit
+    var res

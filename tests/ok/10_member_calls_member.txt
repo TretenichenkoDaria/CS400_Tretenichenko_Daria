@@ -1,0 +1,17 @@
+struct calc
+{
+ i32 base
+ fn double_base := () -> i32
+ {
+ i32 d{base + base}
+ exit d
+ }
+ fn quad := () -> i32
+ {
+ i32 q{double_base() + double_base()}
+ exit q
+ }
+}
+calc c{5}
+i32 res{c.quad()}
+exit res

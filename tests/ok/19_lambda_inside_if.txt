@@ -1,0 +1,14 @@
+i32 mut res{0}
+bool flag{true}
+if flag
+{
+  i32 x{20}
+  fn sub := [x](i32 y) -> i32
+  {
+    i32 diff{x - y}
+    exit diff
+  }
+  res := sub(5)
+}
+print(res)
+exit 0

@@ -1,0 +1,21 @@
+program
+  struct Point
+    field x i32 mut
+    field y i32 mut
+  fn makePoint(i32 a, i32 b) -> Point
+    block
+      decl p Point const
+        var a
+        var b
+      exit
+        var p
+  decl pt Point const
+    call makePoint
+      const 12
+      const 34
+  decl sum i32 const
+    binop +
+      field pt.x
+      field pt.y
+  exit
+    var sum

@@ -1,0 +1,8 @@
+fn greet := () -> i32
+{
+  print("hello from greet")
+  exit 42
+}
+i32 unused_var{greet()}
+exit 0
+

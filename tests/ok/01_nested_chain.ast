@@ -1,0 +1,17 @@
+program
+  struct Point
+    field x i32 mut
+    field y i32 mut
+  struct Circle
+    field center Point const
+    field radius i32 mut
+  decl p Point const
+    const 10
+    const 20
+  decl c Circle const
+    var p
+    const 5
+  decl res i32 const
+    field c.center.x
+  exit
+    var res

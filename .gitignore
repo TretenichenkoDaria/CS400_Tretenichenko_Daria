@@ -1,0 +1,8 @@
+.idea/
+.DS_Store
+output.ll
+out.ll
+test_out.ll
+__pycache__/
+*.pyc
+venv/

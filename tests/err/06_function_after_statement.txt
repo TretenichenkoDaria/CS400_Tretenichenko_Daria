@@ -1,0 +1,6 @@
+i32 x{10}
+fn test := (i32 a) -> i32
+{
+  exit a
+}
+exit x

@@ -1,0 +1,12 @@
+fn double := (i32 x) -> i32
+{
+  i32 r{x + x}
+  exit r
+}
+fn apply := [](i32 a) -> i32
+{
+  i32 res{double(a)}
+  exit res
+}
+print(apply(21))
+exit 0

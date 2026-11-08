@@ -1,0 +1,27 @@
+program
+  decl val i32 const
+    const 5
+  lambda inner -> i32
+    capture val
+    param x i32
+    block
+      decl r i32 const
+        binop +
+          var val
+          var x
+      exit
+        var r
+  lambda outer -> i32
+    capture inner
+    param y i32
+    block
+      decl r2 i32 const
+        call inner
+          var y
+      exit
+        var r2
+  print
+    call outer
+      const 10
+  exit
+    const 0

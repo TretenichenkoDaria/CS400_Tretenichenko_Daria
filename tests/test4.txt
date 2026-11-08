@@ -1,4 +1,0 @@
-int x
-x := 5
-y := x + 3
-exit y

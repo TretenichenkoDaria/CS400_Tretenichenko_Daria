@@ -1,0 +1,16 @@
+program
+  struct Point
+    field x i32 mut
+    field y i32 mut
+  fn getX(Point p) -> i32
+    block
+      exit
+        field p.x
+  decl pt Point const
+    const 42
+    const 99
+  decl val i32 const
+    call getX
+      var pt
+  exit
+    var val

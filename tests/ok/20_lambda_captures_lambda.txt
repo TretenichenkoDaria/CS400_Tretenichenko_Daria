@@ -1,0 +1,13 @@
+i32 val{5}
+fn inner := [val](i32 x) -> i32
+{
+  i32 r{val + x}
+  exit r
+}
+fn outer := [inner](i32 y) -> i32
+{
+  i32 r2{inner(y)}
+  exit r2
+}
+print(outer(10))
+exit 0

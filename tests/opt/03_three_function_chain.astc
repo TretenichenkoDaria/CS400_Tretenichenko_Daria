@@ -1,0 +1,12 @@
+program
+  fn twice(i32 a) -> i32
+    block
+      decl r i32 const
+        binop +
+          var a
+          var a
+      exit
+        var r
+  exit
+    call twice
+      const 2

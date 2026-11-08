@@ -1,0 +1,6 @@
+fn check := (i32 a) -> bool
+{
+  exit a
+}
+bool res{check(1)}
+exit res

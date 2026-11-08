@@ -1,0 +1,20 @@
+program
+  decl k i32 mut
+    const 10
+  lambda times -> i32
+    capture k
+    param y i32
+    block
+      decl r i32 const
+        binop *
+          var k
+          var y
+      exit
+        var r
+  assign k
+    const 100
+  print
+    call times
+      const 5
+  exit
+    const 0

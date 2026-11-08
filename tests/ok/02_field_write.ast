@@ -1,0 +1,19 @@
+program
+  struct Point
+    field x i32 mut
+    field y i32 mut
+  decl p Point mut
+    const 10
+    const 20
+  assign p.x
+    const 15
+  assign p.y
+    binop +
+      field p.y
+      const 5
+  decl res i32 const
+    binop +
+      field p.x
+      field p.y
+  exit
+    var res

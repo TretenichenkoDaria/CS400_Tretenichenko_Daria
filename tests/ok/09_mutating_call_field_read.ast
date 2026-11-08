@@ -1,0 +1,22 @@
+program
+  struct box
+    field value i32 mut
+    memberfn inc -> i32
+      param d i32
+      block
+        assign value
+          binop +
+            var value
+            var d
+        exit
+          var value
+  decl b box mut
+    const 10
+  decl dummy i32 const
+    membercall inc
+      var b
+      const 5
+  decl res i32 const
+    field b.value
+  exit
+    var res

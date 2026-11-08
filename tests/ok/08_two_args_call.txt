@@ -1,0 +1,12 @@
+struct adder
+{
+ i32 base
+ fn add2 := (i32 a, i32 b) -> i32
+ {
+ i32 sum{base + a + b}
+ exit sum
+ }
+}
+adder x{10}
+i32 res{x.add2(20, 12)}
+exit res

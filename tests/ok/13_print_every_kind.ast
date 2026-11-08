@@ -1,0 +1,29 @@
+program
+  struct pair
+    field a i32 const
+    field b i32 const
+  struct wrapper
+    field p pair const
+    field flag bool const
+  decl pt pair const
+    const 1
+    const 2
+  decl w wrapper const
+    var pt
+    bool true
+  decl big i64 const
+    const 7000000000
+  print
+    string "start:"
+  print
+    const 42
+  print
+    var big
+  print
+    bool true
+  print
+    var pt
+  print
+    var w
+  exit
+    const 0

@@ -1,0 +1,22 @@
+program
+  fn double(i32 x) -> i32
+    block
+      decl r i32 const
+        binop +
+          var x
+          var x
+      exit
+        var r
+  lambda apply -> i32
+    param a i32
+    block
+      decl res i32 const
+        call double
+          var a
+      exit
+        var res
+  print
+    call apply
+      const 21
+  exit
+    const 0

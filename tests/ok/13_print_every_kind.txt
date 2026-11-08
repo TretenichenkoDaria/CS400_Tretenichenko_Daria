@@ -1,0 +1,20 @@
+struct pair
+{
+ i32 a
+ i32 b
+}
+struct wrapper
+{
+ pair p
+ bool flag
+}
+pair pt{1, 2}
+wrapper w{pt, true}
+i64 big{7000000000}
+print("start:")
+print(42)
+print(big)
+print(true)
+print(pt)
+print(w)
+exit 0

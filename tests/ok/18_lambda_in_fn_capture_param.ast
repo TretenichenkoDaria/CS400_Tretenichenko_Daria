@@ -1,0 +1,23 @@
+program
+  fn make_adder(i32 offset) -> i32
+    block
+      lambda add -> i32
+        capture offset
+        param x i32
+        block
+          decl sum i32 const
+            binop +
+              var offset
+              var x
+          exit
+            var sum
+      decl ans i32 const
+        call add
+          const 7
+      exit
+        var ans
+  print
+    call make_adder
+      const 10
+  exit
+    const 0

@@ -1,0 +1,5 @@
+program
+  decl z i32 const
+    const 15
+  exit
+    var z

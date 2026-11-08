@@ -1,0 +1,8 @@
+i32 mut r{5}
+if true
+{
+  i32 dead{42}
+  r := 10
+}
+exit r
+

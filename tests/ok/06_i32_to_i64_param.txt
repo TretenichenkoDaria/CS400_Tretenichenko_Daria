@@ -1,0 +1,8 @@
+fn widen := (i64 val) -> i64
+{
+  i64 d{val * 2}
+  exit d
+}
+i32 small{21}
+i64 res{widen(small)}
+exit res

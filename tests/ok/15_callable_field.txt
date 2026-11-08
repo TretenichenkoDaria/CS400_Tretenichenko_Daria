@@ -1,0 +1,18 @@
+struct Multiplier
+{
+  i32 factor
+  fn call := (i32 val) -> i32
+  {
+    i32 res{val * factor}
+    exit res
+  }
+}
+struct Calculator
+{
+  Multiplier mult
+}
+Multiplier m{3}
+Calculator c{m}
+print(c.mult(7))
+print(c.mult.call(7))
+exit 0
